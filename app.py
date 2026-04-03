@@ -1,8 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import pandas as pd
 import sqlite3
-import openai
 import os
 
 # -------------------------------
@@ -12,18 +10,12 @@ app = Flask(__name__)
 CORS(app)
 
 # -------------------------------
-# OPENAI API KEY
-# -------------------------------
-openai.api_key = ""   # 🔥 Replace with your key
-
-# -------------------------------
 # DATABASE INIT
 # -------------------------------
 def init_db():
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
 
-    # Inventory table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS inventory (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,7 +29,6 @@ def init_db():
     )
     ''')
 
-    # User table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,7 +53,7 @@ init_db()
 # -------------------------------
 @app.route('/')
 def home():
-    return "Inventory Backend Running"
+    return "Inventory Backend Running 🚀"
 
 # -------------------------------
 # LOGIN
@@ -81,10 +72,7 @@ def login():
 
     conn.close()
 
-    if user:
-        return jsonify({"status": "success"})
-    else:
-        return jsonify({"status": "fail"})
+    return jsonify({"status": "success" if user else "fail"})
 
 # -------------------------------
 # CSV UPLOAD
@@ -101,14 +89,10 @@ def upload_csv():
     df.dropna(subset=['product_name', 'quantity'], inplace=True)
     df['quantity'] = df['quantity'].astype(int)
 
-    if 'expiry_date' not in df.columns:
-        df['expiry_date'] = None
-
-    if 'supplier' not in df.columns:
-        df['supplier'] = "Unknown"
-
-    if 'category' not in df.columns:
-        df['category'] = "General"
+    # Default values if missing
+    df['expiry_date'] = df.get('expiry_date', None)
+    df['supplier'] = df.get('supplier', "Unknown")
+    df['category'] = df.get('category', "General")
 
     conn = sqlite3.connect('database.db')
     df.to_sql('inventory', conn, if_exists='append', index=False)
@@ -176,117 +160,41 @@ def recommend():
     return jsonify(recommendations)
 
 # -------------------------------
-# AI CHATBOT (OPENAI)
+# CHATBOT (RULE-BASED)
 # -------------------------------
 @app.route('/chat', methods=['POST'])
 def chat():
-    user_msg = request.json.get("message").lower()
+    user_msg = request.json.get("message", "").lower()
 
     conn = sqlite3.connect('database.db')
     df = pd.read_sql_query("SELECT * FROM inventory", conn)
     conn.close()
 
-    # 🔹 HELP FUNCTION
     def contains(words):
         return any(word in user_msg for word in words)
 
-    # 🔹 LOW STOCK
-    if contains(["low", "less", "minimum", "running out", "shortage"]):
+    if contains(["low", "less", "minimum", "shortage"]):
         low = df[df['quantity'] < 15]
         if low.empty:
-            return jsonify({"answer": "Good news! No items are currently low in stock 😊"})
+            return jsonify({"answer": "No items are low in stock"})
         return jsonify({
-            "answer": f"⚠ These items are running low:\n{low[['product_name','quantity']].to_string(index=False)}"
+            "answer": low[['product_name','quantity']].to_dict(orient='records')
         })
 
-    # 🔹 TOTAL ITEMS
-    elif contains(["total items", "how many items", "count"]):
-        return jsonify({"answer": f"There are {len(df)} products in your inventory."})
+    elif contains(["total items", "count"]):
+        return jsonify({"answer": f"Total products: {len(df)}"})
 
-    # 🔹 TOTAL VALUE
-    elif contains(["total value", "inventory value", "worth"]):
+    elif contains(["value", "worth"]):
         total = int((df['quantity'] * df['price']).sum())
-        return jsonify({"answer": f"💰 Your total inventory value is approximately ₹{total}."})
+        return jsonify({"answer": f"Total inventory value: ₹{total}"})
 
-    # 🔹 HIGHEST STOCK
-    elif contains(["highest", "maximum", "most stock"]):
-        item = df.loc[df['quantity'].idxmax()]
-        return jsonify({
-            "answer": f"📈 {item['product_name']} has the highest stock with {item['quantity']} units."
-        })
-
-    # 🔹 LOWEST STOCK
-    elif contains(["lowest", "minimum stock"]):
-        item = df.loc[df['quantity'].idxmin()]
-        return jsonify({
-            "answer": f"📉 {item['product_name']} has the lowest stock with only {item['quantity']} units."
-        })
-
-    # 🔹 CATEGORY COUNT
-    elif contains(["categories", "how many categories"]):
-        count = df['category'].nunique()
-        return jsonify({"answer": f"You have {count} different categories in your inventory."})
-
-    # 🔹 CATEGORY ANALYSIS
-    elif contains(["category wise", "category stock"]):
-        summary = df.groupby('category')['quantity'].sum()
-        return jsonify({
-            "answer": f"📊 Category-wise stock:\n{summary.to_string()}"
-        })
-
-    # 🔹 RECOMMENDATION
-    elif contains(["recommend", "restock", "suggest"]):
-        df['suggested'] = (df['quantity'] * 1.5).astype(int)
-        return jsonify({
-            "answer": f"📦 Suggested restock quantities:\n{df[['product_name','suggested']].to_string(index=False)}"
-        })
-
-    # 🔹 EXPENSIVE
-    elif contains(["expensive", "costly", "highest price"]):
-        item = df.loc[df['price'].idxmax()]
-        return jsonify({
-            "answer": f"💎 {item['product_name']} is the most expensive item priced at ₹{item['price']}."
-        })
-
-    # 🔹 CHEAPEST
-    elif contains(["cheap", "lowest price"]):
-        item = df.loc[df['price'].idxmin()]
-        return jsonify({
-            "answer": f"💸 {item['product_name']} is the cheapest item priced at ₹{item['price']}."
-        })
-
-    # 🔹 SUMMARY
-    elif contains(["summary", "overview", "report"]):
-        total_items = len(df)
-        total_value = int((df['quantity'] * df['price']).sum())
-        categories = df['category'].nunique()
-
-        return jsonify({
-            "answer": f"""📊 Inventory Summary:
-- Total Items: {total_items}
-- Categories: {categories}
-- Total Value: ₹{total_value}"""
-        })
-
-    # 🔹 PRODUCT SEARCH
-    else:
-        for name in df['product_name']:
-            if name.lower() in user_msg:
-                item = df[df['product_name'] == name].iloc[0]
-                return jsonify({
-                    "answer": f"""🔍 Product Details:
-Name: {item['product_name']}
-Category: {item['category']}
-Quantity: {item['quantity']}
-Price: ₹{item['price']}"""
-                })
-
-    # 🔹 DEFAULT RESPONSE
     return jsonify({
-        "answer": "🤖 I can help with stock levels, product details, inventory value, and recommendations. Try asking something like 'Which items are low?' 😊"
+        "answer": "Ask about stock, value, recommendations, etc."
     })
+
 # -------------------------------
-# RUN SERVER
+# RUN SERVER (FIXED FOR DEPLOYMENT)
 # -------------------------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
