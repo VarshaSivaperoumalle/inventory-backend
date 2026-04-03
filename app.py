@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import pandas as pd
 import sqlite3
 import os
 
@@ -105,12 +106,32 @@ def upload_csv():
 # -------------------------------
 @app.route('/inventory', methods=['GET'])
 def get_inventory():
-    conn = sqlite3.connect('database.db')
-    df = pd.read_sql_query("SELECT * FROM inventory", conn)
-    conn.close()
+    try:
+        conn = sqlite3.connect('database.db')
+        cursor = conn.cursor()
 
-    return df.to_json(orient='records')
+        rows = cursor.execute("SELECT * FROM inventory").fetchall()
 
+        conn.close()
+
+        # Convert to JSON format
+        data = []
+        for row in rows:
+            data.append({
+                "id": row[0],
+                "product_name": row[1],
+                "category": row[2],
+                "quantity": row[3],
+                "price": row[4],
+                "supplier": row[5],
+                "date_added": row[6],
+                "expiry_date": row[7]
+            })
+
+        return jsonify(data)
+
+    except Exception as e:
+        return jsonify({"error": str(e)})
 # -------------------------------
 # SUMMARY
 # -------------------------------
