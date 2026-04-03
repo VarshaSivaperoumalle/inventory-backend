@@ -110,11 +110,23 @@ def get_inventory():
         conn = sqlite3.connect('database.db')
         cursor = conn.cursor()
 
-        rows = cursor.execute("SELECT * FROM inventory").fetchall()
+        # Create table if not exists
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_name TEXT,
+            category TEXT,
+            quantity INTEGER,
+            price REAL,
+            supplier TEXT,
+            date_added TEXT,
+            expiry_date TEXT
+        )
+        """)
 
+        rows = cursor.execute("SELECT * FROM inventory").fetchall()
         conn.close()
 
-        # Convert to JSON format
         data = []
         for row in rows:
             data.append({
